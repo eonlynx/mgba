@@ -9,20 +9,21 @@
 #include <mgba/internal/gb/io.h>
 #include <mgba/internal/gb/sio.h>
 
-// A real link cable is synchronous: the GB clocks, and the byte it reads is
-// whatever the other machine had already shifted in.  When the GB is the clock
-// master, that means its byte only becomes available once the GBA has actually
-// consumed the previous one.  Letting the GB core shift on its own clock makes
-// it run ahead of the GBA (the GBA then answers dozens of bytes late and the
-// GB reads a stale latch), which is what broke the Crystal handshake.
+// GB side of the cable.
 //
-// So the driver takes the transfer over from the core: it hands the byte to
-// the bridge and only completes the GB side (SB + serial IRQ) once the GBA has
-// clocked it out.  No thread is ever blocked; the GB just keeps executing
-// until the interrupt arrives, exactly like an external-clock slave.
+// The GBA is the clock master, so when the GB is in external-clock mode
+// (SC bit 0 = 0) the core does not shift anything by itself.  This driver takes
+// the transfer over: it records the byte the GB wants to send, marks itself
+// armed, and completes (SB + serial IRQ) only when the GBA has clocked it.
+// That is exactly what the hardware does, and it is what keeps the two sides
+// in lockstep.
+//
+// During the very first handshake the GB also probes the link as the clock
+// master (SC bit 0 = 1).  In that case there is nobody else to clock it, so the
+// transfer completes immediately with whatever the GBA last sent.
 
 #define GB_GB_LINK_POLL_CYCLES 64
-// Give up if the GBA is not attached/paused: behave like an unplugged cable.
+// Behave like an unplugged cable if the GBA never clocks (2 s at 4.19 MHz).
 #define GB_GB_LINK_TIMEOUT_CYCLES (4194304u * 2u)
 
 static void _gbGBLinkComplete(struct GBSIOGBLinkDriver* link, uint8_t received) {
@@ -30,33 +31,32 @@ static void _gbGBLinkComplete(struct GBSIOGBLinkDriver* link, uint8_t received) 
 	struct GB* gb = sio->p;
 	link->waiting = false;
 	mTimingDeschedule(&gb->timing, &link->event);
-	// The core scheduled its own 8-bit shift when SC was written; cancel it.
+	// Cancel the shift window the core may have scheduled for an internal
+	// clock transfer, and finish the byte here.
 	sio->remainingBits = 0;
 	sio->pendingSB = 0xFF;
 	gb->memory.io[GB_REG_SB] = received;
 	gb->memory.io[GB_REG_SC] = GBRegisterSCClearEnable(gb->memory.io[GB_REG_SC]);
 	gb->memory.io[GB_REG_IF] |= 1 << GB_IRQ_SIO;
 	GBUpdateIRQs(gb);
+	mLOG(GB_SIO, DEBUG, "GBLink GB done recv=%02X gb=%u gba=%u",
+	     received, link->bridge->gbCount, link->bridge->gbaCount);
 }
 
 static void _gbGBLinkPoll(struct mTiming* timing, void* context, uint32_t cyclesLate) {
 	UNUSED(cyclesLate);
 	struct GBSIOGBLinkDriver* link = context;
+	uint8_t received;
 	if (!link->waiting || !link->d.p) {
 		return;
 	}
-	uint32_t gba;
-	uint8_t latch;
-	MutexLock(&link->bridge->mutex);
-	gba = link->bridge->gbaCount;
-	latch = link->bridge->gbaLatch;
-	MutexUnlock(&link->bridge->mutex);
-	link->waited += GB_GB_LINK_POLL_CYCLES;
-	if (gba != link->waitForGba) {
-		_gbGBLinkComplete(link, latch);
+	if (GBLinkBridgeGbFinish(link->bridge, link->waitForGba, &received)) {
+		_gbGBLinkComplete(link, received);
 		return;
 	}
+	link->waited += GB_GB_LINK_POLL_CYCLES;
 	if (link->waited > GB_GB_LINK_TIMEOUT_CYCLES) {
+		GBLinkBridgeArm(link->bridge, false);
 		_gbGBLinkComplete(link, 0xFF);
 		return;
 	}
@@ -66,6 +66,12 @@ static void _gbGBLinkPoll(struct mTiming* timing, void* context, uint32_t cycles
 static void _gbGBLinkWriteSB(struct GBSIODriver* driver, uint8_t value) {
 	struct GBSIOGBLinkDriver* link = (struct GBSIOGBLinkDriver*) driver;
 	link->sb = value;
+	GBLinkBridgeSetGbSb(link->bridge, value);
+	static unsigned logCount;
+	if (logCount < 300 || (++logCount & 0x3F) == 0) {
+		mLOG(GB_SIO, DEBUG, "GBLink GB sb=%02X", value);
+		logCount++;
+	}
 }
 
 static uint8_t _gbGBLinkWriteSC(struct GBSIODriver* driver, uint8_t value) {
@@ -73,37 +79,35 @@ static uint8_t _gbGBLinkWriteSC(struct GBSIODriver* driver, uint8_t value) {
 	struct GBSIO* sio = link->d.p;
 	struct GB* gb = sio->p;
 	bool enabled = GBRegisterSCIsEnable(value);
-	uint32_t now = mTimingCurrentTime(&gb->timing);
-	if (enabled && !link->enabled && (uint32_t) (now - link->lastCycle) > GB_LINK_GB_IDLE_GAP) {
-		// A new link session: nothing can be pending in lockstep mode, but
-		// make sure a previous attempt left nothing behind.
-		GBLinkBridgeFlush(link->bridge);
+	static unsigned scLog;
+
+	if (enabled) {
+		if (scLog < 300 || (++scLog & 0x3F) == 0) {
+			mLOG(GB_SIO, DEBUG, "GBLink GB %s sc=%02X sb=%02X",
+			     GBRegisterSCIsShiftClock(value) ? "master" : "slave ", value, link->sb);
+			scLog++;
+		}
 	}
-	link->lastCycle = now;
-	link->enabled = enabled;
+
 	if (enabled && GBRegisterSCIsShiftClock(value)) {
-		uint32_t before;
-		// Take over: the core must not shift on its own, the byte is clocked
-		// by the GBA.
+		// The GB is acting as the clock master (handshake probe).
+		mTimingDeschedule(&gb->timing, &sio->event);
+		GBLinkBridgeSetGbSb(link->bridge, link->sb);
+		_gbGBLinkComplete(link, GBLinkBridgeGbaLatch(link->bridge));
+	} else if (enabled) {
+		// The GB is the external-clock slave: arm and wait for the GBA.
 		mTimingDeschedule(&gb->timing, &sio->event);
 		sio->remainingBits = 0;
-		MutexLock(&link->bridge->mutex);
-		before = link->bridge->gbaCount;
-		MutexUnlock(&link->bridge->mutex);
-		static unsigned logCount;
-		if (logCount < 256 || (++logCount & 0x3F) == 0) {
-			mLOG(GB_SIO, DEBUG, "GBLink GB gb=%u gba=%u sb=%02X",
-			     link->bridge->gbCount, link->bridge->gbaCount, link->sb);
-			logCount++;
-		}
-		GBLinkBridgeExchange(link->bridge, link->sb, false);
-		link->waitForGba = before + 1;
+		GBLinkBridgeSetGbSb(link->bridge, link->sb);
+		GBLinkBridgeArm(link->bridge, true);
+		link->waitForGba = GBLinkBridgeGbaCount(link->bridge) + 1;
 		link->waited = 0;
 		link->waiting = true;
 		mTimingDeschedule(&gb->timing, &link->event);
 		mTimingSchedule(&gb->timing, &link->event, GB_GB_LINK_POLL_CYCLES);
 	} else if (link->waiting) {
 		link->waiting = false;
+		GBLinkBridgeArm(link->bridge, false);
 		mTimingDeschedule(&gb->timing, &link->event);
 	}
 	return 0;

@@ -27,13 +27,32 @@ CXX_GUARD_START
 
 #define GB_LINK_QUEUE_SIZE 8192
 
+// The GB keeps clocking bytes while the GBA is not listening (for example,
+// while the player is still walking to the cable club counter).  Anything the
+// GB sent before the GBA opened the link belongs to a previous "session" and
+// must be discarded, otherwise the GBA starts the exchange thousands of bytes
+// behind.  A session is considered new when the GBA has not transferred
+// anything for a few frames.
+#define GB_LINK_SESSION_GAP (4 * 280896) // 4 GBA frames
+// One GB frame (4.194304 MHz).  The GB toggles SC off/on for every byte, so
+// anything longer than a frame between an enable and the previous activity is
+// a genuinely new link session.
+#define GB_LINK_GB_IDLE_GAP 70224
+
 struct GBLinkBridge {
-	uint8_t gbaToGb[GB_LINK_QUEUE_SIZE];
-	uint32_t gbaToGbHead;
-	uint32_t gbaToGbTail;
+	// The GB clocks one byte at a time and reads whatever the GBA currently
+	// has latched in its shift register, so the GBA -> GB direction is a
+	// single slot, not a queue.  With one push and one pop per exchange a
+	// queue never drains: any backlog becomes a permanent delay and the GB
+	// keeps reading bytes from dozens of exchanges ago.
+	uint8_t gbaLatch;
+	// The GB -> GBA direction stays a queue: the GBA only consumes a byte when
+	// it completes a transfer, and it can lag behind while it catches up.
 	uint8_t gbToGba[GB_LINK_QUEUE_SIZE];
 	uint32_t gbToGbaHead;
 	uint32_t gbToGbaTail;
+	uint32_t gbaCount;
+	uint32_t gbCount;
 	Mutex mutex;
 };
 
@@ -41,16 +60,28 @@ struct GBASIOGBLinkDriver {
 	struct GBASIODriver d;
 	struct GBLinkBridge* bridge;
 	struct mTimingEvent event;
+	uint32_t lastTransfer;
+	uint32_t starts;
+	uint32_t polls;
+	bool started;
 };
 
 struct GBSIOGBLinkDriver {
 	struct GBSIODriver d;
 	struct GBLinkBridge* bridge;
+	struct mTimingEvent event;
 	uint8_t sb;
+	uint32_t waitForGba;
+	uint32_t waited;
+	uint32_t lastCycle;
+	bool waiting;
+	bool enabled;
 };
 
 static inline void GBLinkBridgeInit(struct GBLinkBridge* bridge) {
 	memset(bridge, 0, sizeof(*bridge));
+	// Until the GBA detects the peer it idles on the connection byte.
+	bridge->gbaLatch = 0x02;
 	MutexInit(&bridge->mutex);
 }
 
@@ -58,30 +89,42 @@ static inline void GBLinkBridgeDeinit(struct GBLinkBridge* bridge) {
 	MutexDeinit(&bridge->mutex);
 }
 
+static inline void GBLinkBridgeFlush(struct GBLinkBridge* bridge) {
+	MutexLock(&bridge->mutex);
+	bridge->gbaLatch = 0x02;
+	bridge->gbToGbaHead = 0;
+	bridge->gbToGbaTail = 0;
+	MutexUnlock(&bridge->mutex);
+}
+
+static inline bool GBLinkBridgeHasGbByte(struct GBLinkBridge* bridge) {
+	bool has;
+	MutexLock(&bridge->mutex);
+	has = bridge->gbToGbaTail != bridge->gbToGbaHead;
+	MutexUnlock(&bridge->mutex);
+	return has;
+}
+
 static inline uint8_t GBLinkBridgeExchange(struct GBLinkBridge* bridge, uint8_t out, bool fromGba) {
-	uint8_t in = 0xFF;
-	uint32_t next;
+	uint8_t in;
 	MutexLock(&bridge->mutex);
 	if (fromGba) {
-		next = (bridge->gbaToGbHead + 1) % GB_LINK_QUEUE_SIZE;
-		if (next != bridge->gbaToGbTail) {
-			bridge->gbaToGb[bridge->gbaToGbHead] = out;
-			bridge->gbaToGbHead = next;
-		}
+		bridge->gbaCount++;
+		// This is what the GB will clock out from now on.
+		bridge->gbaLatch = out;
+		in = 0xFF;
 		if (bridge->gbToGbaTail != bridge->gbToGbaHead) {
 			in = bridge->gbToGba[bridge->gbToGbaTail];
 			bridge->gbToGbaTail = (bridge->gbToGbaTail + 1) % GB_LINK_QUEUE_SIZE;
 		}
 	} else {
-		next = (bridge->gbToGbaHead + 1) % GB_LINK_QUEUE_SIZE;
+		bridge->gbCount++;
+		uint32_t next = (bridge->gbToGbaHead + 1) % GB_LINK_QUEUE_SIZE;
 		if (next != bridge->gbToGbaTail) {
 			bridge->gbToGba[bridge->gbToGbaHead] = out;
 			bridge->gbToGbaHead = next;
 		}
-		if (bridge->gbaToGbTail != bridge->gbaToGbHead) {
-			in = bridge->gbaToGb[bridge->gbaToGbTail];
-			bridge->gbaToGbTail = (bridge->gbaToGbTail + 1) % GB_LINK_QUEUE_SIZE;
-		}
+		in = bridge->gbaLatch;
 	}
 	MutexUnlock(&bridge->mutex);
 	return in;

@@ -23,6 +23,7 @@ set(SOURCE_FILES
 	video.c)
 
 set(SIO_FILES
+	sio/gbalink.c
 	sio/lockstep.c
 	sio/printer.c)
 

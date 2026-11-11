@@ -12,6 +12,7 @@
 
 #include <mgba/core/core.h>
 #include <mgba/core/lockstep.h>
+#include <mgba/internal/gblink.h>
 #ifdef M_CORE_GBA
 #include <mgba/internal/gba/sio/lockstep.h>
 #endif
@@ -59,6 +60,8 @@ private:
 
 		CoreController* controller;
 		Node node = {nullptr};
+		GBASIOGBLinkDriver* gbaGBLink = nullptr;
+		GBSIOGBLinkDriver* gbGBLink = nullptr;
 		int awake = 1;
 		int32_t cyclesPosted = 0;
 		unsigned waitMask = 0;
@@ -74,6 +77,8 @@ private:
 	Player* player(int id);
 	const Player* player(int id) const;
 	void fixOrder();
+	void attachBridgeDrivers();
+	void detachBridgeDrivers();
 
 	union {
 		mLockstep m_lockstep;
@@ -87,6 +92,8 @@ private:
 #endif
 
 	mPlatform m_platform = mPLATFORM_NONE;
+	struct GBLinkBridge m_gbBridge;
+	bool m_gbBridgeActive = false;
 	int m_nextPid = 0;
 	int m_claimedIds = 0;
 	QHash<int, Player> m_pids;

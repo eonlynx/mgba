@@ -106,6 +106,14 @@ static inline uint8_t GBLinkBridgeGbaLatch(struct GBLinkBridge* bridge) {
 	return byte;
 }
 
+static inline bool GBLinkBridgeHasGbSb(struct GBLinkBridge* bridge) {
+	bool has;
+	MutexLock(&bridge->mutex);
+	has = bridge->gbArmed;
+	MutexUnlock(&bridge->mutex);
+	return has;
+}
+
 // GBA side: one master transfer finished.  Like the real cable, the byte the
 // GBA receives is whatever the GB currently has in SB; it does not matter
 // whether the GB has "armed" again yet.

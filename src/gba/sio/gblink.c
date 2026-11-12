@@ -18,9 +18,7 @@
 // implementations pace themselves externally (VCOUNT/timer), so completing a
 // few hundred cycles after the start is both accurate and safe.
 #define GBA_GB_LINK_CYCLES 512
-#define GBA_GB_LINK_POLL_CYCLES 256
-// Give up after ~3 ms if the GB never arms, so the game is never stuck.
-#define GBA_GB_LINK_MAX_POLLS 48
+#define GBA_GB_LINK_POLL_CYCLES 1024
 
 static void _gbaGBLinkEvent(struct mTiming* timing, void* context, uint32_t cyclesLate);
 static void _gbaGBLinkReset(struct GBASIODriver* driver);
@@ -29,6 +27,7 @@ static bool _gbaGBLinkHandlesMode(struct GBASIODriver* driver, enum GBASIOMode m
 static int _gbaGBLinkConnectedDevices(struct GBASIODriver* driver);
 static int _gbaGBLinkDeviceId(struct GBASIODriver* driver);
 static bool _gbaGBLinkStart(struct GBASIODriver* driver);
+static uint16_t _gbaGBLinkWriteSIOCNT(struct GBASIODriver* driver, uint16_t value);
 
 void GBASIOGBLinkDriverCreate(struct GBASIOGBLinkDriver* driver, struct GBLinkBridge* bridge) {
 	memset(driver, 0, sizeof(*driver));
@@ -38,6 +37,7 @@ void GBASIOGBLinkDriverCreate(struct GBASIOGBLinkDriver* driver, struct GBLinkBr
 	driver->d.connectedDevices = _gbaGBLinkConnectedDevices;
 	driver->d.deviceId = _gbaGBLinkDeviceId;
 	driver->d.start = _gbaGBLinkStart;
+	driver->d.writeSIOCNT = _gbaGBLinkWriteSIOCNT;
 	driver->bridge = bridge;
 	driver->event.context = driver;
 	driver->event.name = "GBA GB Link";
@@ -68,6 +68,18 @@ static bool _gbaGBLinkHandlesMode(struct GBASIODriver* d, enum GBASIOMode mode) 
 	return mode == GBA_SIO_NORMAL_8;
 }
 
+// SI (bit 2) reflects whether the GB currently holds a byte for us.  The game
+// reads it before starting a transfer, like Gen3-to-GenX's slave-ready check.
+static uint16_t _gbaGBLinkWriteSIOCNT(struct GBASIODriver* d, uint16_t value) {
+	struct GBASIOGBLinkDriver* driver = (struct GBASIOGBLinkDriver*) d;
+	if (GBLinkBridgeHasGbSb(driver->bridge)) {
+		value &= ~0x0004;
+	} else {
+		value |= 0x0004;
+	}
+	return value;
+}
+
 static int _gbaGBLinkConnectedDevices(struct GBASIODriver* d) {
 	UNUSED(d);
 	return 1;
@@ -82,7 +94,7 @@ static bool _gbaGBLinkStart(struct GBASIODriver* d) {
 	struct GBASIOGBLinkDriver* driver = (struct GBASIOGBLinkDriver*) d;
 	struct GBA* gba = d->p->p;
 	driver->started = true;
-	driver->waits = 0;
+	driver->polls = 0;
 	if (!mTimingIsScheduled(&gba->timing, &driver->event)) {
 		mTimingSchedule(&gba->timing, &driver->event, GBA_GB_LINK_CYCLES);
 	}
@@ -97,12 +109,22 @@ static void _gbaGBLinkEvent(struct mTiming* timing, void* context, uint32_t cycl
 	if (!sio || !driver->started) {
 		return;
 	}
+	// The game gave up on this transfer (its timeout expired): stop polling.
+	if (!GBASIONormalIsStart(sio->siocnt)) {
+		return;
+	}
 	driver->polls++;
+
+	if (!GBLinkBridgeHasGbSb(driver->bridge)) {
+		// The GB has not presented its next byte yet.  Wait for it instead of
+		// clocking an empty slot: one GBA transfer must be one GB byte.
+		mTimingSchedule(timing, &driver->event, GBA_GB_LINK_POLL_CYCLES);
+		return;
+	}
 
 	uint8_t out = sio->p->memory.io[GBA_REG(SIODATA8)];
 	uint8_t in = 0xFF;
 	GBLinkBridgeGbaExchange(driver->bridge, out, &in);
-	driver->waits = 0;
 
 	static unsigned logCount;
 	if (logCount < 256 || (++logCount & 0x3F) == 0) {

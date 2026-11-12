@@ -39,8 +39,12 @@ static void _gbGBLinkComplete(struct GBSIOGBLinkDriver* link, uint8_t received) 
 	gb->memory.io[GB_REG_SC] = GBRegisterSCClearEnable(gb->memory.io[GB_REG_SC]);
 	gb->memory.io[GB_REG_IF] |= 1 << GB_IRQ_SIO;
 	GBUpdateIRQs(gb);
-	mLOG(GB_SIO, DEBUG, "GBLink GB done recv=%02X gb=%u gba=%u",
-	     received, link->bridge->gbCount, link->bridge->gbaCount);
+	static unsigned doneLog;
+	if (doneLog < 128 || (++doneLog & 0x3F) == 0) {
+		mLOG(GB_SIO, DEBUG, "GBLink GB done recv=%02X gb=%u gba=%u",
+		     received, link->bridge->gbCount, link->bridge->gbaCount);
+		doneLog++;
+	}
 }
 
 static void _gbGBLinkPoll(struct mTiming* timing, void* context, uint32_t cyclesLate) {

@@ -114,6 +114,14 @@ static inline uint32_t GBLinkBridgeGbaCount(struct GBLinkBridge* bridge) {
 	return count;
 }
 
+static inline uint32_t GBLinkBridgeGbCount(struct GBLinkBridge* bridge) {
+	uint32_t count;
+	MutexLock(&bridge->mutex);
+	count = bridge->gbCount;
+	MutexUnlock(&bridge->mutex);
+	return count;
+}
+
 static inline uint8_t GBLinkBridgeGbaLatch(struct GBLinkBridge* bridge) {
 	uint8_t byte;
 	MutexLock(&bridge->mutex);

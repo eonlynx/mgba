@@ -367,6 +367,9 @@ bool MultiplayerController::attachGame(CoreController* controller) {
 }
 
 void MultiplayerController::attachBridgeDrivers() {
+	// A new session starts with a clean cable: the counters and the pending
+	// byte of the other side are dropped.
+	GBLinkBridgeReset(&m_gbBridge);
 	for (auto pid : m_players) {
 		Player& p = m_pids.find(pid).value();
 		struct mCore* core = p.controller->thread()->core;

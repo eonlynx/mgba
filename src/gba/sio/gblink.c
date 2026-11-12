@@ -103,6 +103,7 @@ static bool _gbaGBLinkStart(struct GBASIODriver* d) {
 }
 
 static void _gbaGBLinkEvent(struct mTiming* timing, void* context, uint32_t cyclesLate) {
+	UNUSED(timing);
 	UNUSED(cyclesLate);
 	struct GBASIOGBLinkDriver* driver = context;
 	struct GBASIO* sio = driver->d.p;
@@ -126,7 +127,7 @@ static void _gbaGBLinkEvent(struct mTiming* timing, void* context, uint32_t cycl
 	static unsigned logCount;
 	if (logCount < 256 || (++logCount & 0x3F) == 0) {
 		mLOG(GBA_SIO, DEBUG, "GBLink GBA gba=%u gb=%u out=%02X in=%02X",
-		     driver->bridge->gbaCount, driver->bridge->gbCount, out, in);
+		     GBLinkBridgeGbaCount(driver->bridge), GBLinkBridgeGbCount(driver->bridge), out, in);
 		logCount++;
 	}
 

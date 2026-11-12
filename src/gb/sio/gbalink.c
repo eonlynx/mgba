@@ -42,7 +42,7 @@ static void _gbGBLinkComplete(struct GBSIOGBLinkDriver* link, uint8_t received) 
 	static unsigned doneLog;
 	if (doneLog < 128 || (++doneLog & 0x3F) == 0) {
 		mLOG(GB_SIO, DEBUG, "GBLink GB done recv=%02X gb=%u gba=%u",
-		     received, link->bridge->gbCount, link->bridge->gbaCount);
+		     received, GBLinkBridgeGbCount(link->bridge), GBLinkBridgeGbaCount(link->bridge));
 		doneLog++;
 	}
 }

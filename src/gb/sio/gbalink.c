@@ -71,6 +71,20 @@ static void _gbGBLinkWriteSB(struct GBSIODriver* driver, uint8_t value) {
 	struct GBSIOGBLinkDriver* link = (struct GBSIOGBLinkDriver*) driver;
 	link->sb = value;
 	GBLinkBridgeSetGbSb(link->bridge, value);
+	// The trade-start actions are the interesting ones: log them every time
+	// they change so a log shows exactly when Crystal enters (and leaves)
+	// CheckLinkTimeout_Gen2.
+	{
+		static uint8_t lastAction;
+		if ((value == 0x75 || value == 0x76 || value == 0xFD) && value != lastAction) {
+			mLOG(GB_SIO, DEBUG, "GBLink GB action sb=%02X", value);
+		}
+		if (value == 0x75 || value == 0x76 || value == 0xFD) {
+			lastAction = value;
+		} else if (lastAction && value == 0xFE) {
+			lastAction = value;
+		}
+	}
 	static unsigned logCount;
 	if (logCount < 300 || (++logCount & 0x3F) == 0) {
 		mLOG(GB_SIO, DEBUG, "GBLink GB sb=%02X", value);
@@ -94,7 +108,9 @@ static uint8_t _gbGBLinkWriteSC(struct GBSIODriver* driver, uint8_t value) {
 	}
 
 	if (enabled && GBRegisterSCIsShiftClock(value)) {
-		// The GB is acting as the clock master (handshake probe).
+		// The GB is acting as the clock master (handshake probe): it is
+		// (re)starting the Cable Club from the receptionist.
+		mLOG(GB_SIO, DEBUG, "GBLink GB probe sc=%02X sb=%02X", value, link->sb);
 		mTimingDeschedule(&gb->timing, &sio->event);
 		GBLinkBridgeSetGbSb(link->bridge, link->sb);
 		_gbGBLinkComplete(link, GBLinkBridgeGbaLatch(link->bridge));

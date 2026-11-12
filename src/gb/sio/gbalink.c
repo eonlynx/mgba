@@ -108,11 +108,14 @@ static uint8_t _gbGBLinkWriteSC(struct GBSIODriver* driver, uint8_t value) {
 	}
 
 	if (enabled && GBRegisterSCIsShiftClock(value)) {
-		// The GB is acting as the clock master (handshake probe): it is
-		// (re)starting the Cable Club from the receptionist.
+		// The GB is acting as the clock master (Cable Club discovery probe):
+		// it has just written its establishment byte to SB and clocked it.
+		// Present that byte to the GBA too, so a GBA that is already past the
+		// receptionist notices that the GB restarted the link.
 		mLOG(GB_SIO, DEBUG, "GBLink GB probe sc=%02X sb=%02X", value, link->sb);
 		mTimingDeschedule(&gb->timing, &sio->event);
 		GBLinkBridgeSetGbSb(link->bridge, link->sb);
+		GBLinkBridgeArm(link->bridge, true);
 		_gbGBLinkComplete(link, GBLinkBridgeGbaLatch(link->bridge));
 	} else if (enabled) {
 		// The GB is the external-clock slave: arm and wait for the GBA.

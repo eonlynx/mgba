@@ -30,6 +30,7 @@ CXX_GUARD_START
 
 struct GBLinkBridge {
 	uint8_t gbaLatch;   // last byte clocked out by the GBA
+	uint8_t gbaData;    // byte clocked out by the last *armed* transfer
 	uint8_t gbSb;       // last byte the GB wrote to SB
 	bool gbArmed;       // the GB is armed and waiting for the GBA to clock it
 	uint32_t gbaCount;  // completed GBA transfers
@@ -59,6 +60,7 @@ struct GBSIOGBLinkDriver {
 static inline void GBLinkBridgeInit(struct GBLinkBridge* bridge) {
 	memset(bridge, 0, sizeof(*bridge));
 	bridge->gbaLatch = 0xFF;
+	bridge->gbaData = 0xFF;
 	bridge->gbSb = 0xFF;
 	MutexInit(&bridge->mutex);
 }
@@ -71,6 +73,7 @@ static inline void GBLinkBridgeDeinit(struct GBLinkBridge* bridge) {
 static inline void GBLinkBridgeReset(struct GBLinkBridge* bridge) {
 	MutexLock(&bridge->mutex);
 	bridge->gbaLatch = 0xFF;
+	bridge->gbaData = 0xFF;
 	bridge->gbSb = 0xFF;
 	bridge->gbArmed = false;
 	bridge->gbaCount = 0;
@@ -129,13 +132,18 @@ static inline bool GBLinkBridgeHasGbSb(struct GBLinkBridge* bridge) {
 
 // GBA side: one master transfer finished.  The master never stalls, exactly
 // like the real cable; a transfer that finds nothing armed still completes and
-// reads SERIAL_NO_DATA_BYTE (0xFE), which the protocol ignores.  Only a
-// transfer that actually clocked an armed GB byte counts as a completed GB
-// transfer, which is what keeps the two streams one byte to one byte.
+// reads SERIAL_NO_DATA_BYTE (0xFE), which the protocol ignores.
+//
+// Only a transfer that actually clocked an armed GB byte counts as a completed
+// GB transfer, which keeps the two streams one byte to one byte.  That
+// transfer's outgoing byte is stored in gbaData, because by the time the GB
+// notices the clock the GBA may already have sent later (unarmed) bytes, and
+// gbaLatch would no longer be the byte for this transfer.
 static inline void GBLinkBridgeGbaExchange(struct GBLinkBridge* bridge, uint8_t out, uint8_t* in) {
 	MutexLock(&bridge->mutex);
 	bridge->gbaLatch = out;
 	if (bridge->gbArmed) {
+		bridge->gbaData = out;
 		*in = bridge->gbSb;
 		bridge->gbArmed = false;
 		++bridge->gbaCount;
@@ -151,7 +159,7 @@ static inline bool GBLinkBridgeGbFinish(struct GBLinkBridge* bridge, uint32_t wa
 	MutexLock(&bridge->mutex);
 	ok = (int32_t) (bridge->gbaCount - waitFor) >= 0;
 	if (ok) {
-		*in = bridge->gbaLatch;
+		*in = bridge->gbaData;
 		++bridge->gbCount;
 	}
 	MutexUnlock(&bridge->mutex);

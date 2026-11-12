@@ -101,14 +101,7 @@ static void _gbaGBLinkEvent(struct mTiming* timing, void* context, uint32_t cycl
 
 	uint8_t out = sio->p->memory.io[GBA_REG(SIODATA8)];
 	uint8_t in = 0xFF;
-	if (!GBLinkBridgeGbaExchange(driver->bridge, out, &in)) {
-		// The GB has not armed its next byte yet.  Wait for it, but do not
-		// hang the game forever if it is not there.
-		if (++driver->waits < GBA_GB_LINK_MAX_POLLS) {
-			mTimingSchedule(timing, &driver->event, GBA_GB_LINK_POLL_CYCLES);
-			return;
-		}
-	}
+	GBLinkBridgeGbaExchange(driver->bridge, out, &in);
 	driver->waits = 0;
 
 	static unsigned logCount;

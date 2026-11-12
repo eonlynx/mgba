@@ -106,20 +106,16 @@ static inline uint8_t GBLinkBridgeGbaLatch(struct GBLinkBridge* bridge) {
 	return byte;
 }
 
-// GBA side: one master transfer finished.  Succeeds only if the GB is holding
-// a byte (armed); `out` becomes the byte the GB will read next.
-static inline bool GBLinkBridgeGbaExchange(struct GBLinkBridge* bridge, uint8_t out, uint8_t* in) {
-	bool ok;
+// GBA side: one master transfer finished.  Like the real cable, the byte the
+// GBA receives is whatever the GB currently has in SB; it does not matter
+// whether the GB has "armed" again yet.
+static inline void GBLinkBridgeGbaExchange(struct GBLinkBridge* bridge, uint8_t out, uint8_t* in) {
 	MutexLock(&bridge->mutex);
-	ok = bridge->gbArmed;
-	if (ok) {
-		*in = bridge->gbSb;
-		bridge->gbaLatch = out;
-		bridge->gbArmed = false;
-		++bridge->gbaCount;
-	}
+	*in = bridge->gbSb;
+	bridge->gbaLatch = out;
+	bridge->gbArmed = false;
+	++bridge->gbaCount;
 	MutexUnlock(&bridge->mutex);
-	return ok;
 }
 
 // GB side: complete the armed transfer once the GBA has clocked it.

@@ -121,9 +121,7 @@ static uint8_t _gbGBLinkWriteSC(struct GBSIODriver* driver, uint8_t value) {
 		// The GB is the external-clock slave: arm and wait for the GBA.
 		mTimingDeschedule(&gb->timing, &sio->event);
 		sio->remainingBits = 0;
-		GBLinkBridgeSetGbSb(link->bridge, link->sb);
-		GBLinkBridgeArm(link->bridge, true);
-		link->waitForGba = GBLinkBridgeGbaCount(link->bridge) + 1;
+		link->waitForGba = GBLinkBridgeArmWithCount(link->bridge, link->sb) + 1;
 		link->waited = 0;
 		link->waiting = true;
 		mTimingDeschedule(&gb->timing, &link->event);

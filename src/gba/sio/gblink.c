@@ -115,13 +115,10 @@ static void _gbaGBLinkEvent(struct mTiming* timing, void* context, uint32_t cycl
 	}
 	driver->polls++;
 
-	if (!GBLinkBridgeHasGbSb(driver->bridge)) {
-		// The GB has not presented its next byte yet.  Wait for it instead of
-		// clocking an empty slot: one GBA transfer must be one GB byte.
-		mTimingSchedule(timing, &driver->event, GBA_GB_LINK_POLL_CYCLES);
-		return;
-	}
-
+	// Always finish the transfer, like the real cable: the master does not
+	// stall waiting for the slave to arm.  If the GB has a byte armed it is
+	// consumed; otherwise the transfer reads SERIAL_NO_DATA_BYTE (0xFE), the
+	// protocol's "nothing to send" value, instead of repeating stale data.
 	uint8_t out = sio->p->memory.io[GBA_REG(SIODATA8)];
 	uint8_t in = 0xFF;
 	GBLinkBridgeGbaExchange(driver->bridge, out, &in);

@@ -90,6 +90,19 @@ static inline void GBLinkBridgeArm(struct GBLinkBridge* bridge, bool armed) {
 	MutexUnlock(&bridge->mutex);
 }
 
+// Publishes the GB's byte and arms the transfer atomically, returning the
+// number of GBA clocks seen so far.  The GB then waits for gbaCount + 1, so a
+// clock cannot slip between "publish the byte" and "start waiting for it".
+static inline uint32_t GBLinkBridgeArmWithCount(struct GBLinkBridge* bridge, uint8_t sb) {
+	uint32_t count;
+	MutexLock(&bridge->mutex);
+	bridge->gbSb = sb;
+	bridge->gbArmed = true;
+	count = bridge->gbaCount;
+	MutexUnlock(&bridge->mutex);
+	return count;
+}
+
 static inline uint32_t GBLinkBridgeGbaCount(struct GBLinkBridge* bridge) {
 	uint32_t count;
 	MutexLock(&bridge->mutex);
@@ -114,15 +127,21 @@ static inline bool GBLinkBridgeHasGbSb(struct GBLinkBridge* bridge) {
 	return has;
 }
 
-// GBA side: one master transfer finished.  Like the real cable, the byte the
-// GBA receives is whatever the GB currently has in SB; it does not matter
-// whether the GB has "armed" again yet.
+// GBA side: one master transfer finished.  The master never stalls, exactly
+// like the real cable; a transfer that finds nothing armed still completes and
+// reads SERIAL_NO_DATA_BYTE (0xFE), which the protocol ignores.  Only a
+// transfer that actually clocked an armed GB byte counts as a completed GB
+// transfer, which is what keeps the two streams one byte to one byte.
 static inline void GBLinkBridgeGbaExchange(struct GBLinkBridge* bridge, uint8_t out, uint8_t* in) {
 	MutexLock(&bridge->mutex);
-	*in = bridge->gbSb;
 	bridge->gbaLatch = out;
-	bridge->gbArmed = false;
-	++bridge->gbaCount;
+	if (bridge->gbArmed) {
+		*in = bridge->gbSb;
+		bridge->gbArmed = false;
+		++bridge->gbaCount;
+	} else {
+		*in = 0xFE;
+	}
 	MutexUnlock(&bridge->mutex);
 }
 

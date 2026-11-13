@@ -96,9 +96,8 @@ static void _gbGBLinkWriteSB(struct GBSIODriver* driver, uint8_t value) {
 		}
 	}
 	static unsigned logCount;
-	if (value != 0xFE || (++logCount & 0xFFF) == 0) {
+	if ((++logCount & 0x3FF) == 0) {
 		mLOG(GB_SIO, DEBUG, "GBLink GB sb=%02X", value);
-		logCount++;
 	}
 }
 
@@ -110,10 +109,10 @@ static uint8_t _gbGBLinkWriteSC(struct GBSIODriver* driver, uint8_t value) {
 	static unsigned scLog;
 
 	if (enabled) {
-		if (link->sb != 0xFE || (++scLog & 0xFFF) == 0) {
+		scLog++;
+		if ((scLog & 0x3FF) == 0) {
 			mLOG(GB_SIO, DEBUG, "GBLink GB %s sc=%02X sb=%02X",
 			     GBRegisterSCIsShiftClock(value) ? "master" : "slave ", value, link->sb);
-			scLog++;
 		}
 	}
 

@@ -23,8 +23,12 @@
 // transfer completes immediately with whatever the GBA last sent.
 
 #define GB_GB_LINK_POLL_CYCLES 64
-// Behave like an unplugged cable if the GBA never clocks (2 s at 4.19 MHz).
-#define GB_GB_LINK_TIMEOUT_CYCLES (4194304u * 2u)
+// Behave like an unplugged cable if the GBA never clocks.  Keep this well above
+// the GBA's flash-save and menu-transition pauses: a 2 s timeout cleared the
+// armed byte while the GBA was still initialising the trade menu, which made
+// the two sides lose one byte per timeout.  60 s is only a last-resort cable
+// check; the games' own link timeouts remain the protocol timers.
+#define GB_GB_LINK_TIMEOUT_CYCLES (4194304u * 60u)
 
 static void _gbGBLinkComplete(struct GBSIOGBLinkDriver* link, uint8_t received) {
 	struct GBSIO* sio = link->d.p;
@@ -64,6 +68,8 @@ static void _gbGBLinkPoll(struct mTiming* timing, void* context, uint32_t cycles
 	}
 	link->waited += GB_GB_LINK_POLL_CYCLES;
 	if (link->waited > GB_GB_LINK_TIMEOUT_CYCLES) {
+		mLOG(GB_SIO, DEBUG, "GBLink GB timeout wait=%u gba=%u waited=%lu sb=%02X",
+		     link->waitForGba, GBLinkBridgeGbaCount(link->bridge), (unsigned long) link->waited, link->sb);
 		GBLinkBridgeArm(link->bridge, false);
 		_gbGBLinkComplete(link, 0xFF);
 		return;
@@ -128,6 +134,11 @@ static uint8_t _gbGBLinkWriteSC(struct GBSIODriver* driver, uint8_t value) {
 		link->waitForGba = GBLinkBridgeArmWithCount(link->bridge, link->sb) + 1;
 		link->waited = 0;
 		link->waiting = true;
+		static unsigned armLog;
+		if (++armLog < 32 || (armLog & 0xFF) == 0) {
+			mLOG(GB_SIO, DEBUG, "GBLink GB arm sb=%02X wait=%u gba=%u",
+			     link->sb, link->waitForGba, GBLinkBridgeGbaCount(link->bridge));
+		}
 		mTimingDeschedule(&gb->timing, &link->event);
 		mTimingSchedule(&gb->timing, &link->event, GB_GB_LINK_POLL_CYCLES);
 	} else if (link->waiting) {

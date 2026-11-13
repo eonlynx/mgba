@@ -138,6 +138,14 @@ static inline bool GBLinkBridgeHasGbSb(struct GBLinkBridge* bridge) {
 	return has;
 }
 
+static inline uint8_t GBLinkBridgeGbSb(struct GBLinkBridge* bridge) {
+	uint8_t sb;
+	MutexLock(&bridge->mutex);
+	sb = bridge->gbSb;
+	MutexUnlock(&bridge->mutex);
+	return sb;
+}
+
 // GBA side: one master transfer finished.  The master never stalls, exactly
 // like the real cable; a transfer that finds nothing armed still completes and
 // reads SERIAL_NO_DATA_BYTE (0xFE), which the protocol ignores.

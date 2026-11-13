@@ -122,7 +122,18 @@ static void _gbaGBLinkEvent(struct mTiming* timing, void* context, uint32_t cycl
 	// protocol's "nothing to send" value, instead of repeating stale data.
 	uint8_t out = sio->p->memory.io[GBA_REG(SIODATA8)];
 	uint8_t in = 0xFF;
+	bool armed = GBLinkBridgeHasGbSb(driver->bridge);
+	uint8_t gbSb = GBLinkBridgeGbSb(driver->bridge);
 	GBLinkBridgeGbaExchange(driver->bridge, out, &in);
+
+	// A byte sitting in SB while the armed flag is clear means the GB wrote a
+	// value but did not arm it (or its arm was cleared by a stale timeout).
+	// Log it sparsely: it is the signature of the GBA running ahead.
+	static unsigned missLog;
+	if (!armed && gbSb != 0xFF && gbSb != 0xFE && (++missLog & 0x3FF) == 0) {
+		mLOG(GBA_SIO, DEBUG, "GBLink GBA miss gbSb=%02X out=%02X gba=%u gb=%u",
+		     gbSb, out, GBLinkBridgeGbaCount(driver->bridge), GBLinkBridgeGbCount(driver->bridge));
+	}
 
 	static unsigned logCount;
 	if (in != 0xFE || (++logCount & 0xFFF) == 0) {

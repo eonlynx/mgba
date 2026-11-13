@@ -30,6 +30,10 @@ static void _gbGBLinkComplete(struct GBSIOGBLinkDriver* link, uint8_t received) 
 	struct GBSIO* sio = link->d.p;
 	struct GB* gb = sio->p;
 	link->waiting = false;
+	// A master probe publishes SB so the GBA can see it, but it is not a
+	// slave arm.  Clear the armed flag here as well so the GBA does not
+	// consume a stale probe byte as if it were a real answer.
+	GBLinkBridgeArm(link->bridge, false);
 	mTimingDeschedule(&gb->timing, &link->event);
 	// Cancel the shift window the core may have scheduled for an internal
 	// clock transfer, and finish the byte here.
@@ -40,7 +44,7 @@ static void _gbGBLinkComplete(struct GBSIOGBLinkDriver* link, uint8_t received) 
 	gb->memory.io[GB_REG_IF] |= 1 << GB_IRQ_SIO;
 	GBUpdateIRQs(gb);
 	static unsigned doneLog;
-	if (doneLog < 128 || (++doneLog & 0x3F) == 0) {
+	if (received != 0xFE || (++doneLog & 0xFFF) == 0) {
 		mLOG(GB_SIO, DEBUG, "GBLink GB done recv=%02X gb=%u gba=%u",
 		     received, GBLinkBridgeGbCount(link->bridge), GBLinkBridgeGbaCount(link->bridge));
 		doneLog++;
@@ -86,7 +90,7 @@ static void _gbGBLinkWriteSB(struct GBSIODriver* driver, uint8_t value) {
 		}
 	}
 	static unsigned logCount;
-	if (logCount < 300 || (++logCount & 0x3F) == 0) {
+	if (value != 0xFE || (++logCount & 0xFFF) == 0) {
 		mLOG(GB_SIO, DEBUG, "GBLink GB sb=%02X", value);
 		logCount++;
 	}
@@ -100,7 +104,7 @@ static uint8_t _gbGBLinkWriteSC(struct GBSIODriver* driver, uint8_t value) {
 	static unsigned scLog;
 
 	if (enabled) {
-		if (scLog < 300 || (++scLog & 0x3F) == 0) {
+		if (link->sb != 0xFE || (++scLog & 0xFFF) == 0) {
 			mLOG(GB_SIO, DEBUG, "GBLink GB %s sc=%02X sb=%02X",
 			     GBRegisterSCIsShiftClock(value) ? "master" : "slave ", value, link->sb);
 			scLog++;

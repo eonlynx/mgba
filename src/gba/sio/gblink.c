@@ -125,7 +125,7 @@ static void _gbaGBLinkEvent(struct mTiming* timing, void* context, uint32_t cycl
 	GBLinkBridgeGbaExchange(driver->bridge, out, &in);
 
 	static unsigned logCount;
-	if (logCount < 256 || (++logCount & 0x3F) == 0) {
+	if (in != 0xFE || (++logCount & 0xFFF) == 0) {
 		mLOG(GBA_SIO, DEBUG, "GBLink GBA gba=%u gb=%u out=%02X in=%02X",
 		     GBLinkBridgeGbaCount(driver->bridge), GBLinkBridgeGbCount(driver->bridge), out, in);
 		logCount++;

@@ -22,7 +22,7 @@
 // master (SC bit 0 = 1).  In that case there is nobody else to clock it, so the
 // transfer completes immediately with whatever the GBA last sent.
 
-#define GB_GB_LINK_POLL_CYCLES 64
+#define GB_GB_LINK_POLL_CYCLES 256
 // Behave like an unplugged cable if the GBA never clocks.  Keep this well above
 // the GBA's flash-save and menu-transition pauses: a 2 s timeout cleared the
 // armed byte while the GBA was still initialising the trade menu, which made
@@ -148,8 +148,22 @@ static uint8_t _gbGBLinkWriteSC(struct GBSIODriver* driver, uint8_t value) {
 	return 0;
 }
 
+static void _gbGBLinkDeinit(struct GBSIODriver* driver) {
+	struct GBSIOGBLinkDriver* link = (struct GBSIOGBLinkDriver*) driver;
+	if (link->waiting) {
+		struct GB* gb = link->d.p ? link->d.p->p : NULL;
+		link->waiting = false;
+		GBLinkBridgeArm(link->bridge, false);
+		if (gb) {
+			mTimingDeschedule(&gb->timing, &link->event);
+		}
+	}
+	GBLinkBridgeReset(link->bridge);
+}
+
 void GBSIOGBLinkDriverCreate(struct GBSIOGBLinkDriver* driver, struct GBLinkBridge* bridge) {
 	memset(driver, 0, sizeof(*driver));
+	driver->d.deinit = _gbGBLinkDeinit;
 	driver->d.writeSB = _gbGBLinkWriteSB;
 	driver->d.writeSC = _gbGBLinkWriteSC;
 	driver->bridge = bridge;

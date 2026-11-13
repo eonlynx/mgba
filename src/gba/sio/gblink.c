@@ -18,7 +18,6 @@
 // implementations pace themselves externally (VCOUNT/timer), so completing a
 // few hundred cycles after the start is both accurate and safe.
 #define GBA_GB_LINK_CYCLES 512
-#define GBA_GB_LINK_POLL_CYCLES 1024
 
 static void _gbaGBLinkEvent(struct mTiming* timing, void* context, uint32_t cyclesLate);
 static void _gbaGBLinkReset(struct GBASIODriver* driver);
@@ -55,12 +54,14 @@ static void _gbaGBLinkReset(struct GBASIODriver* d) {
 	struct GBASIOGBLinkDriver* driver = (struct GBASIOGBLinkDriver*) d;
 	_gbaGBLinkDeschedule(driver);
 	driver->started = false;
+	GBLinkBridgeReset(driver->bridge);
 }
 
 static void _gbaGBLinkDeinit(struct GBASIODriver* d) {
 	struct GBASIOGBLinkDriver* driver = (struct GBASIOGBLinkDriver*) d;
 	_gbaGBLinkDeschedule(driver);
 	driver->started = false;
+	GBLinkBridgeReset(driver->bridge);
 }
 
 static bool _gbaGBLinkHandlesMode(struct GBASIODriver* d, enum GBASIOMode mode) {
@@ -94,7 +95,6 @@ static bool _gbaGBLinkStart(struct GBASIODriver* d) {
 	struct GBASIOGBLinkDriver* driver = (struct GBASIOGBLinkDriver*) d;
 	struct GBA* gba = d->p->p;
 	driver->started = true;
-	driver->polls = 0;
 	if (!mTimingIsScheduled(&gba->timing, &driver->event)) {
 		mTimingSchedule(&gba->timing, &driver->event, GBA_GB_LINK_CYCLES);
 	}
@@ -114,7 +114,6 @@ static void _gbaGBLinkEvent(struct mTiming* timing, void* context, uint32_t cycl
 	if (!GBASIONormalIsStart(sio->siocnt)) {
 		return;
 	}
-	driver->polls++;
 
 	// Always finish the transfer, like the real cable: the master does not
 	// stall waiting for the slave to arm.  If the GB has a byte armed it is

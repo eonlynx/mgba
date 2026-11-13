@@ -42,8 +42,6 @@ struct GBASIOGBLinkDriver {
 	struct GBASIODriver d;
 	struct GBLinkBridge* bridge;
 	struct mTimingEvent event;
-	uint32_t polls;
-	uint32_t waits;
 	bool started;
 };
 
